@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Help Desk</title>
+<style>
+:root{--bg:#f1f3f2;--panel:#fff;--ink:#17231f;--muted:#5a6b65;--line:#d8dfdc;--accent:#0f6b5c;
+--Low:#5a6b65;--Medium:#2b6cb0;--High:#b7791f;--Urgent:#b83a3a}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+header{display:flex;align-items:center;gap:1rem;padding:.9rem 1.5rem;background:var(--ink);color:#fff}
+header h1{font-size:1.15rem;margin:0;flex:1}
+header small{opacity:.75}
+header button{background:none;border:1px solid #ffffff55;color:#fff}
+main{max-width:920px;margin:1.5rem auto;padding:0 1rem}
+button,input,select,textarea{font:inherit}
+button{padding:.5rem .9rem;border-radius:6px;border:1px solid var(--line);background:var(--panel);color:var(--ink);cursor:pointer}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+:focus-visible{outline:3px solid #7cc7b8;outline-offset:1px}
+input,select,textarea{width:100%;padding:.55rem .65rem;border:1px solid var(--line);border-radius:6px;background:#fff}
+label{display:block;font-size:.9rem;color:var(--muted);margin:.7rem 0 .2rem}
+.auth{max-width:380px;margin:12vh auto;background:var(--panel);padding:1.75rem;border-radius:10px;border:1px solid var(--line)}
+.auth h2{margin-top:0}.auth>button.primary{width:100%;margin-top:1rem}
+.err{color:var(--Urgent);min-height:1.4em;margin:.6rem 0 0;font-size:.92rem}
+.bar{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;margin-bottom:1rem}.spacer{flex:1}
+.chip[aria-pressed=true]{background:var(--ink);color:#fff;border-color:var(--ink)}
+.tabs button{border:none;background:none;border-bottom:3px solid transparent;border-radius:0;padding:.4rem .2rem;margin-right:1rem}
+.tabs button[aria-current=true]{border-color:var(--accent);font-weight:600}
+.ticket{display:grid;grid-template-columns:6px 1fr auto;gap:.9rem;width:100%;text-align:left;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:.7rem 1rem .7rem 0;margin-bottom:.6rem;align-items:center;overflow:hidden}
+.ticket .stripe{align-self:stretch}
+.ticket h3{margin:0;font-size:1.02rem}.ticket p{margin:.15rem 0 0;color:var(--muted);font-size:.88rem}
+.pri{font-weight:600}.status{font-size:.88rem;color:var(--muted)}
+.empty{padding:2.5rem 1rem;text-align:center;color:var(--muted);background:var(--panel);border:1px dashed var(--line);border-radius:8px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:.7rem;margin-bottom:1.2rem}
+.stat{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:.8rem 1rem}
+.stat b{display:block;font-size:1.7rem}.stat span{color:var(--muted);font-size:.9rem}
+dialog{border:none;border-radius:10px;padding:1.4rem;width:min(560px,94vw);max-height:90vh}
+dialog::backdrop{background:#0008}
+.row{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:.7rem}
+.dlg-actions{display:flex;gap:.5rem;justify-content:flex-end;margin-top:1rem}
+.comment{border-left:3px solid var(--line);padding:.2rem .8rem;margin:.6rem 0}
+.comment.tech{border-color:var(--accent)}.comment small{color:var(--muted)}
+.desc{white-space:pre-wrap;background:var(--bg);padding:.7rem;border-radius:6px}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<dialog id="dlg"></dialog>
+<script>
+const STATUSES=['Open','In Progress','Resolved','Closed'],PRIORITIES=['Low','Medium','High','Urgent'];
+const $=(s)=>document.querySelector(s);
+const esc=(s)=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let token=localStorage.getItem('hd_token'),me=null,view='tickets',filter='All',tickets=[],mode='login';
+const isTech=()=>me?.role==='technician';
+const fmt=(d)=>new Date(d.replace(' ','T')+'Z').toLocaleString([], {dateStyle:'medium',timeStyle:'short'});
+
+async function api(path,opts={}){
+  const res=await fetch('/api/'+path,{...opts,headers:{'Content-Type':'application/json',...(token?{Authorization:'Bearer '+token}:{})},body:opts.body?JSON.stringify(opts.body):undefined});
+  const data=await res.json();
+  if(res.status===401&&token){logout();throw new Error(data.error)}
+  if(!res.ok)throw new Error(data.error||'Something went wrong.');
+  return data;
+}
+function logout(){token=null;me=null;localStorage.removeItem('hd_token');renderAuth()}
+async function start(){if(!token)return renderAuth();try{me=await api('me');loadTickets()}catch{renderAuth()}}
+
+function renderAuth(){
+  const signup=mode==='signup';
+  $('#root').innerHTML=`<form class="auth" id="authForm"><h2>${signup?'Create your account':'Log in to the help desk'}</h2>
+  <label for="email">Email</label><input id="email" type="email" required autocomplete="email">
+  <label for="pw">Password${signup?' (8+ characters)':''}</label><input id="pw" type="password" required minlength="${signup?8:1}" autocomplete="${signup?'new-password':'current-password'}">
+  <p class="err" id="err" role="alert"></p><button class="primary">${signup?'Create account':'Log in'}</button>
+  <p style="text-align:center"><button type="button" id="swap" style="border:none;background:none;color:var(--accent)">${signup?'I already have an account':'Create an account'}</button></p></form>`;
+  $('#swap').onclick=()=>{mode=signup?'login':'signup';renderAuth()};
+  $('#authForm').onsubmit=async(e)=>{e.preventDefault();
+    try{const r=await api(signup?'signup':'login',{method:'POST',body:{email:$('#email').value,password:$('#pw').value}});
+      token=r.token;localStorage.setItem('hd_token',token);view='tickets';start()}catch(x){$('#err').textContent=x.message}};
+}
+
+function shell(inner){
+  $('#root').innerHTML=`<header><h1>Help Desk <small>${esc(me.email)} (${me.role})</small></h1><button id="out">Log out</button></header>
+  <main><nav class="tabs"><button data-v="tickets" aria-current="${view==='tickets'}">Tickets</button>${isTech()?`<button data-v="stats" aria-current="${view==='stats'}">Overview</button>`:''}</nav><div style="height:1rem"></div>${inner}</main>`;
+  $('#out').onclick=logout;
+  document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;view==='stats'?renderStats():loadTickets()});
+}
+
+async function loadTickets(){try{tickets=await api('tickets'+(filter!=='All'?'?status='+encodeURIComponent(filter):''));renderTickets()}catch{}}
+
+function renderTickets(){
+  const list=tickets.map(t=>`<button class="ticket" data-id="${t.id}"><div class="stripe" style="background:var(--${t.priority})"></div>
+  <div><h3>${esc(t.title)}</h3><p><span class="pri" style="color:var(--${t.priority})">${t.priority}</span> · ${isTech()?esc(t.requester)+' · ':''}${t.assignee?'Assigned to '+esc(t.assignee):'Unassigned'} · ${fmt(t.created_at)}</p></div>
+  <span class="status">${t.status}</span></button>`).join('');
+  shell(`<div class="bar">${['All',...STATUSES].map(s=>`<button class="chip" data-f="${s}" aria-pressed="${filter===s}">${s}</button>`).join('')}<span class="spacer"></span><button class="primary" id="new">New ticket</button></div>
+  ${list||`<div class="empty">${filter==='All'?'No tickets yet. Create one to report an IT problem.':'No tickets with this status.'}</div>`}`);
+  document.querySelectorAll('[data-f]').forEach(b=>b.onclick=()=>{filter=b.dataset.f;loadTickets()});
+  document.querySelectorAll('.ticket').forEach(b=>b.onclick=()=>openTicket(b.dataset.id));
+  $('#new').onclick=openNew;
+}
+
+function openNew(){
+  $('#dlg').innerHTML=`<form id="nf"><h2 style="margin-top:0">New ticket</h2>
+  <label for="title">What's the problem?</label><input id="title" required maxlength="120">
+  <label for="desc">Details</label><textarea id="desc" rows="5" required></textarea>
+  <label for="pri">Priority</label><select id="pri">${PRIORITIES.map(p=>`<option ${p==='Medium'?'selected':''}>${p}</option>`).join('')}</select>
+  <p class="err" id="ferr" role="alert"></p><div class="dlg-actions"><button type="button" id="cancel">Cancel</button><button class="primary">Submit ticket</button></div></form>`;
+  $('#cancel').onclick=()=>$('#dlg').close();
+  $('#nf').onsubmit=async(e)=>{e.preventDefault();
+    try{await api('tickets',{method:'POST',body:{title:$('#title').value,description:$('#desc').value,priority:$('#pri').value}});$('#dlg').close();loadTickets()}catch(x){$('#ferr').textContent=x.message}};
+  $('#dlg').showModal();
+}
+
+async function openTicket(id){
+  try{
+    const t=await api('tickets/'+id);const techs=isTech()?await api('technicians'):[];
+    const sel=(name,list,cur)=>`<select id="${name}">${list.map(o=>`<option value="${o.v??o}" ${(o.v??o)==cur?'selected':''}>${o.l??o}</option>`).join('')}</select>`;
+    $('#dlg').innerHTML=`<h2 style="margin-top:0">${esc(t.title)}</h2>
+    <p style="color:var(--muted);margin:0 0 .6rem">Ticket #${t.id} from ${esc(t.requester)} · ${fmt(t.created_at)}</p><div class="desc">${esc(t.description)}</div>
+    ${isTech()?`<div class="row"><div><label for="st">Status</label>${sel('st',STATUSES,t.status)}</div><div><label for="pr">Priority</label>${sel('pr',PRIORITIES,t.priority)}</div>
+    <div><label for="as">Assigned to</label>${sel('as',[{v:'',l:'Unassigned'},...techs.map(x=>({v:x.id,l:x.email}))],t.assigned_to??'')}</div></div>`
+    :`<p>Status: <b>${t.status}</b> · Priority: <b>${t.priority}</b> · ${t.assignee?'Assigned to '+esc(t.assignee):'Waiting for a technician'}</p>`}
+    <h3>Comments</h3>${t.comments.map(c=>`<div class="comment ${c.role==='technician'?'tech':''}"><small>${esc(c.email)}${c.role==='technician'?' (technician)':''} · ${fmt(c.created_at)}</small><div>${esc(c.body)}</div></div>`).join('')||'<p style="color:var(--muted)">No comments yet.</p>'}
+    <label for="cm">Add a comment</label><textarea id="cm" rows="2"></textarea><p class="err" id="ferr" role="alert"></p>
+    <div class="dlg-actions">${!isTech()&&t.status!=='Closed'?'<button id="close">Close ticket</button>':''}<button id="cancel">Done</button>${isTech()?'<button class="primary" id="save">Save changes</button>':''}<button class="primary" id="post">Post comment</button></div>`;
+    const done=()=>{$('#dlg').close();loadTickets()};
+    $('#cancel').onclick=done;
+    $('#post').onclick=async()=>{try{await api(`tickets/${id}/comments`,{method:'POST',body:{body:$('#cm').value}});openTicket(id)}catch(x){$('#ferr').textContent=x.message}};
+    if($('#save'))$('#save').onclick=async()=>{try{await api('tickets/'+id,{method:'PUT',body:{status:$('#st').value,priority:$('#pr').value,assigned_to:$('#as').value||null}});done()}catch(x){$('#ferr').textContent=x.message}};
+    if($('#close'))$('#close').onclick=async()=>{await api('tickets/'+id,{method:'PUT',body:{status:'Closed'}});done()};
+    if(!$('#dlg').open)$('#dlg').showModal();
+  }catch{}
+}
+
+async function renderStats(){
+  try{const s=await api('stats');
+    const card=(n,l,c)=>`<div class="stat"><b ${c?`style="color:var(--${c})"`:''}>${n}</b><span>${l}</span></div>`;
+    shell(`<h3 style="margin-top:0">By status</h3><div class="stats">${STATUSES.map(k=>card(s.byStatus[k],k)).join('')}</div>
+    <h3>By priority</h3><div class="stats">${PRIORITIES.map(k=>card(s.byPriority[k],k,k)).join('')}</div>
+    <div class="stats">${card(s.unassigned,'Open tickets with no technician')}${card(s.avgResolutionHours===null?'—':s.avgResolutionHours+' h','Average time to resolve')}</div>`)}catch{}
+}
+start();
+</script>
+</body>
+</html>
